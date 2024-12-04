@@ -49,8 +49,23 @@ int port = 1883;
 // Ticker
 Ticker publish_ticker;
 
+// Constant
+constexpr float TEMP_THRESHOLD = 26.7; // Limite de température élevée
+
+// Ticker pour led alerte
+Ticker alert_ticker;
+
+// Flag pour alerte
+volatile bool is_alert_active = false;
+
+
 // Error code
 nsapi_size_or_error_t rc = 0;
+
+//fonction clignoter led
+void blink_led() {
+    led = !led; // Inverse l'état de la LED
+}
 
 // Event queue
 static int id_yield;
@@ -128,6 +143,37 @@ static int8_t publish() {
     message.dup = false;
 
     update_sensor_data();
+     // Vérification de l'alerte
+    if (temperature > TEMP_THRESHOLD) {
+        if (!is_alert_active) {
+            printf("Alerte : Température élevée détectée (%.2f°C)\n", temperature);
+            is_alert_active = true;
+
+            // Activer le clignotement de la LED
+            alert_ticker.attach(&blink_led, std::chrono::milliseconds(500));
+
+            // Publier une alerte sur Adafruit IO
+            char alert_payload[128];
+            snprintf(alert_payload, sizeof(alert_payload), "ALERTE : Température élevée (%.2f°C)", temperature);
+            MQTT::Message alert_message;
+            alert_message.qos = MQTT::QOS1;
+            alert_message.retained = false;
+            alert_message.dup = false;
+            alert_message.payload = (void *)alert_payload;
+            alert_message.payloadlen = strlen(alert_payload);
+            client->publish("AnuBens/feeds/alerte", alert_message);
+        }
+    } else {
+        if (is_alert_active) {
+            printf("Température revenue à la normale (%.2f°C)\n", temperature);
+            is_alert_active = false;
+
+            // Désactiver le clignotement de la LED
+            alert_ticker.detach();
+            led = 0; // Éteindre la LED
+        }
+    }
+
 
    // Publier la température
     snprintf(payload, sizeof(payload), "%.2f", temperature);
@@ -165,7 +211,6 @@ static int8_t publish() {
     }
 
     return 0;
-
 
 }
    void toggle_led() {
