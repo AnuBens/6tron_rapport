@@ -93,6 +93,8 @@ static int8_t publish() {
     float temperature = 25.5; // Exemple de température
     float humidite = 60.0;    // Exemple d'humidité
     float pression = 1013.0;  // Exemple de pression
+    Ticker publish_ticker;
+
 
    // Publier la température
     snprintf(payload, sizeof(payload), "%.2f", temperature);
@@ -102,8 +104,10 @@ static int8_t publish() {
     rc = client->publish(MQTT_TOPIC_TEMP, message);
     if (rc != 0) {
         printf("Failed to publish temperature: %d\n", rc);
-        return rc;
+    } else {
+        printf("Temperature published successfully.\n");
     }
+
 
     // Publier l'humidité
     snprintf(payload, sizeof(payload), "%.2f", humidite);
@@ -186,10 +190,10 @@ int main()
     }
 
     MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
-data.MQTTVersion = 4;
-data.keepAliveInterval = 25;
-data.username.cstring = (char *)"AnuBens";
-data.password.cstring = (char *)"aio_bCuh71jGaf811LvRjPUahXUvFqEV";
+    data.MQTTVersion = 4;
+    data.keepAliveInterval = 25;
+    data.username.cstring = (char *)"AnuBens";
+    data.password.cstring = (char *)"aio_bCuh71jGaf811LvRjPUahXUvFqEV";
     if (client->connect(data) != 0){
         printf("Connection to MQTT Broker Failed\n");
     }
@@ -207,9 +211,10 @@ data.password.cstring = (char *)"aio_bCuh71jGaf811LvRjPUahXUvFqEV";
     // Yield every 1 second
     id_yield = main_queue.call_every(SYNC_INTERVAL * 1000, yield);
 
-    // Publish
-    button.fall(main_queue.event(publish));
-    button.fall(main_queue.event(toggle_led));
+    // Publish ticker
+    publish_ticker.attach(main_queue.event(publish), 5.0); // Appeler `publish` toutes les 5 secondes
+
+    
 
 
     main_queue.dispatch_forever();
