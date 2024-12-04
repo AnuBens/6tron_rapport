@@ -2,6 +2,8 @@
 #include "mbed.h"
 #include <nsapi_dns.h>
 #include <MQTTClientMbedOs.h>
+#include <bme280/bme280.h>
+
 
 namespace {
 #define MQTT_TOPIC_TEMP         "AnuBens/feeds/temperature"
@@ -15,6 +17,26 @@ namespace {
 // Peripherals
 static DigitalOut led(LED1);
 static InterruptIn button(BUTTON1);
+
+using namespace sixtron;
+ 
+ 
+namespace
+{
+    constexpr auto SDA_PIN = I2C1_SDA;
+    constexpr auto SCL_PIN = I2C1_SCL;
+    constexpr auto I2C_ADDRESS = BME280::I2CAddress::Address1;
+}
+I2C i2c(SDA_PIN, SCL_PIN);
+BME280 sensor(&i2c, I2C_ADDRESS);
+ 
+ 
+volatile float temperature = 0.0f;
+
+volatile float humidite = 0.0f;
+
+volatile float pression = 0.0f;
+ 
 
 // Network
 NetworkInterface *network;
@@ -33,6 +55,18 @@ nsapi_size_or_error_t rc = 0;
 // Event queue
 static int id_yield;
 static EventQueue main_queue(32 * EVENTS_EVENT_SIZE);
+
+void update_sensor_data() {
+   
+
+    // Lire les données depuis le capteur
+    temperature = sensor.temperature();
+    humidite = sensor.humidity();
+    pression = sensor.pressure() / 100.0; // Conversion en hPa
+
+    printf("Température : %.2f °C, Humidité : %.2f %%, Pression : %.2f hPa\n",
+           temperature, humidite, pression);
+}
 
 /*!
  *  \brief Called when a message is received
@@ -93,10 +127,7 @@ static int8_t publish() {
     message.retained = false;
     message.dup = false;
 
-    float temperature = 25.5; // Exemple de température
-    float humidite = 60.0;    // Exemple d'humidité
-    float pression = 1013.0;  // Exemple de pression
-
+    update_sensor_data();
 
    // Publier la température
     snprintf(payload, sizeof(payload), "%.2f", temperature);
@@ -147,6 +178,23 @@ static int8_t publish() {
 
 int main()
 {
+
+    if (sensor.initialize() != true) {
+        printf("Erreur d'initialisation du capteur BME280\n");
+        return 1;
+    }
+    printf("Capteur BME280 initialisé avec succès\n");
+ 
+    // config
+    sensor.set_sampling(
+    BME280::SensorMode::NORMAL,
+    BME280::SensorSampling::OVERSAMPLING_X16, // température
+    BME280::SensorSampling::OVERSAMPLING_X16, // pression
+    BME280::SensorSampling::OVERSAMPLING_X16, // humidité
+    BME280::SensorFilter::OFF,                // Pas de filtrage
+    BME280::StandbyDuration::MS_0_5           // Durée de veille
+);
+
     printf("Connecting to border router...\n");
 
     /* Get Network configuration */
@@ -214,7 +262,7 @@ int main()
     id_yield = main_queue.call_every(SYNC_INTERVAL * 1000, yield);
 
     // Publish ticker
-    publish_ticker.attach(main_queue.event(publish), 5.0); // Appeler `publish` toutes les 5 secondes
+    publish_ticker.attach(main_queue.event(publish), 10); // Appeler `publish` toutes les 10 secondes
 
     
 
