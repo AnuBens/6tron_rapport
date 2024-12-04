@@ -24,6 +24,9 @@ MQTTClient *client;
 const char* hostname = "io.adafruit.com";
 int port = 1883;
 
+// Ticker
+Ticker publish_ticker;
+
 // Error code
 nsapi_size_or_error_t rc = 0;
 
@@ -93,7 +96,6 @@ static int8_t publish() {
     float temperature = 25.5; // Exemple de température
     float humidite = 60.0;    // Exemple d'humidité
     float pression = 1013.0;  // Exemple de pression
-    Ticker publish_ticker;
 
 
    // Publier la température
