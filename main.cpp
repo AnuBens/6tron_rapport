@@ -1,10 +1,9 @@
+
 #include "mbed.h"
 #include <nsapi_dns.h>
 #include <MQTTClientMbedOs.h>
 
 namespace {
-
-
 #define MQTT_TOPIC_TEMP         "AnuBens/feeds/temperature"
 #define MQTT_TOPIC_HUM          "AnuBens/feeds/humidite"
 #define MQTT_TOPIC_PRESSURE     "AnuBens/feeds/pression"
@@ -13,56 +12,89 @@ namespace {
 #define SYNC_INTERVAL           1
 }
 
-
+// Peripherals
 static DigitalOut led(LED1);
 static InterruptIn button(BUTTON1);
 
-
+// Network
 NetworkInterface *network;
 MQTTClient *client;
 
-// Configuration MQTT
-const char *hostname = "io.adafruit.com";
+// MQTT
+const char* hostname = "io.adafruit.com";
 int port = 1883;
 
-
+// Error code
 nsapi_size_or_error_t rc = 0;
 
-// File d'événements
+// Event queue
 static int id_yield;
 static EventQueue main_queue(32 * EVENTS_EVENT_SIZE);
 
 /*!
- *  \brief Appelé lorsqu'un message est reçu
+ *  \brief Called when a message is received
+ *
+ *  Print messages received on mqtt topic
  */
-void messageArrived(MQTT::MessageData &md) {
+void messageArrived(MQTT::MessageData& md)
+{
     MQTT::Message &message = md.message;
-    printf("Message received: %.*s\n", message.payloadlen, (char *)message.payload);
+    printf("Message arrived: qos %d, retained %d, dup %d, packetid %d\r\n", message.qos, message.retained, message.dup, message.id);
+    printf("Payload %.*s\r\n", message.payloadlen, (char*)message.payload);
 
-    // Traiter le message pour contrôler la LED
-    if (strncmp((char *)message.payload, "ON", message.payloadlen) == 0) {
+    // Get the payload string
+    char* char_payload = (char*)malloc((message.payloadlen+1)*sizeof(char)); // allocate the necessary size for our buffer
+    char_payload = (char *) message.payload; // get the arrived payload in our buffer
+    char_payload[message.payloadlen] = '\0'; // String must be null terminated
+
+    // Compare our payload with known command strings
+    if (strcmp(char_payload, "ON") == 0) {
         led = 1;
-    } else if (strncmp((char *)message.payload, "OFF", message.payloadlen) == 0) {
+    }
+    else if (strcmp(char_payload, "OFF") == 0) {
         led = 0;
+    }
+    else if (strcmp(char_payload, "RESET") == 0) {
+        printf("RESETTING ...\n");
+        system_reset();
     }
 }
 
 /*!
- *  \brief Publier des données sur Adafruit IO
+ *  \brief Yield to the MQTT client
+ *
+ *  On error, stop publishing and yielding
+ */
+static void yield(){
+    // printf("Yield\n");
+    
+    rc = client->yield(100);
+
+    if (rc != 0){
+        printf("Yield error: %d\n", rc);
+        main_queue.cancel(id_yield);
+        main_queue.break_dispatch();
+        system_reset();
+    }
+}
+
+/*!
+ *  \brief Publish data over the corresponding adafruit MQTT topic
+ *
  */
 static int8_t publish() {
-    char payload[128];
+
+   char payload[128]; // Déclaration du buffer
     MQTT::Message message;
     message.qos = MQTT::QOS1;
     message.retained = false;
     message.dup = false;
 
-    // Simuler des données (remplacez par des valeurs réelles si capteurs connectés)
-    float temperature = 25.5; // Exemple : température fictive
-    float humidity = 60.0;    // Exemple : humidité fictive
-    float pressure = 1013.0;  // Exemple : pression fictive
+    float temperature = 25.5; // Exemple de température
+    float humidite = 60.0;    // Exemple d'humidité
+    float pression = 1013.0;  // Exemple de pression
 
-    // Publier la température
+   // Publier la température
     snprintf(payload, sizeof(payload), "%.2f", temperature);
     message.payload = (void *)payload;
     message.payloadlen = strlen(payload);
@@ -74,10 +106,10 @@ static int8_t publish() {
     }
 
     // Publier l'humidité
-    snprintf(payload, sizeof(payload), "%.2f", humidity);
+    snprintf(payload, sizeof(payload), "%.2f", humidite);
     message.payload = (void *)payload;
     message.payloadlen = strlen(payload);
-    printf("Publishing humidity: %.2f%% to %s\n", humidity, MQTT_TOPIC_HUM);
+    printf("Publishing humidity: %.2f%% to %s\n", humidite, MQTT_TOPIC_HUM);
     rc = client->publish(MQTT_TOPIC_HUM, message);
     if (rc != 0) {
         printf("Failed to publish humidity: %d\n", rc);
@@ -85,10 +117,10 @@ static int8_t publish() {
     }
 
     // Publier la pression
-    snprintf(payload, sizeof(payload), "%.2f", pressure);
+    snprintf(payload, sizeof(payload), "%.2f", pression);
     message.payload = (void *)payload;
     message.payloadlen = strlen(payload);
-    printf("Publishing pressure: %.2f hPa to %s\n", pressure, MQTT_TOPIC_PRESSURE);
+    printf("Publishing pressure: %.2f hPa to %s\n", pression, MQTT_TOPIC_PRESSURE);
     rc = client->publish(MQTT_TOPIC_PRESSURE, message);
     if (rc != 0) {
         printf("Failed to publish pressure: %d\n", rc);
@@ -96,79 +128,89 @@ static int8_t publish() {
     }
 
     return 0;
-}
 
-/*!
- *  \brief Inverser l'état de la LED
- */
-void toggle_led() {
-    led = !led;
-    printf("LED state: %d\n", led.read());
-}
 
-int main() {
+}
+   void toggle_led() {
+    led = !led; 
+    printf("LED état : %d \n", led.read());
+  
+}
+// main() runs in its own thread in the OS
+// (note the calls to ThisThread::sleep_for below for delays)
+
+int main()
+{
     printf("Connecting to border router...\n");
 
-    // Configuration réseau
+    /* Get Network configuration */
     network = NetworkInterface::get_default_instance();
+
     if (!network) {
         printf("Error! No network interface found.\n");
-        return -1;
+        return 0;
     }
 
+    /* Add DNS */
+    nsapi_addr_t new_dns = {
+        NSAPI_IPv6,
+        { 0xfd, 0x9f, 0x59, 0x0a, 0xb1, 0x58, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x01 }
+    };
+    nsapi_dns_add_server(new_dns, "LOWPAN");
+
+    /* Border Router connection */
     rc = network->connect();
     if (rc != 0) {
         printf("Error! net->connect() returned: %d\n", rc);
         return rc;
     }
 
-    // Afficher l'adresse IP
+    /* Print IP address */
     SocketAddress a;
     network->get_ip_address(&a);
     printf("IP address: %s\n", a.get_ip_address() ? a.get_ip_address() : "None");
 
-    // Configuration MQTT
-    printf("Connecting to MQTT broker...\n");
+    /* Open TCP Socket */
+    TCPSocket socket;
     SocketAddress address;
     network->gethostbyname(hostname, &address);
     address.set_port(port);
 
-    TCPSocket socket;
+    /* MQTT Connection */
     client = new MQTTClient(&socket);
     socket.open(network);
-
     rc = socket.connect(address);
-    if (rc != 0) {
-        printf("Connection to MQTT broker failed.\n");
+    if(rc != 0){
+        printf("Connection to MQTT broker Failed\n");
         return rc;
     }
 
     MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
-    data.MQTTVersion = 4;
-    data.keepAliveInterval = 25;
-    data.username.cstring ="AnuBens";
-    data.password.cstring ="aio_bCuh71jGaf811LvRjPUahXUvFqEV";
-    
-
-    if (client->connect(data) != 0) {
-        printf("MQTT connection failed.\n");
-        return -1;
+data.MQTTVersion = 4;
+data.keepAliveInterval = 25;
+data.username.cstring = (char *)"AnuBens";
+data.password.cstring = (char *)"aio_bCuh71jGaf811LvRjPUahXUvFqEV";
+    if (client->connect(data) != 0){
+        printf("Connection to MQTT Broker Failed\n");
     }
 
-    printf("Connected to MQTT broker.\n");
+    printf("Connected to MQTT broker\n");
 
-    // S'abonner au topic pour contrôler la LED
-    if ((rc = client->subscribe(MQTT_TOPIC_SUBSCRIBE, MQTT::QOS1, messageArrived)) != 0) {
-        printf("Failed to subscribe: %d\n", rc);
-        return rc;
+    /* MQTT Subscribe */
+    if ((rc = client->subscribe(MQTT_TOPIC_SUBSCRIBE, MQTT::QOS0, messageArrived)) != 0){
+        printf("rc from MQTT subscribe is %d\r\n", rc);
     }
     printf("Subscribed to Topic: %s\n", MQTT_TOPIC_SUBSCRIBE);
 
-    // Tâches périodiques
-    id_yield = main_queue.call_every(SYNC_INTERVAL * 1000, []() { client->yield(100); });
+    yield();
+
+    // Yield every 1 second
+    id_yield = main_queue.call_every(SYNC_INTERVAL * 1000, yield);
+
+    // Publish
     button.fall(main_queue.event(publish));
     button.fall(main_queue.event(toggle_led));
 
-    // Boucle principale
+
     main_queue.dispatch_forever();
 }
