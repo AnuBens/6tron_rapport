@@ -148,6 +148,7 @@ int main() {
     data.keepAliveInterval = 25;
     data.username.cstring ="AnuBens";
     data.password.cstring ="aio_bCuh71jGaf811LvRjPUahXUvFqEV";
+    
 
     if (client->connect(data) != 0) {
         printf("MQTT connection failed.\n");
